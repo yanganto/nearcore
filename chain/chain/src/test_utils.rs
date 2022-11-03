@@ -23,6 +23,7 @@ use near_primitives::block_header::{Approval, ApprovalInner};
 use near_primitives::challenge::ChallengesResult;
 use near_primitives::epoch_manager::block_info::BlockInfo;
 use near_primitives::epoch_manager::epoch_info::EpochInfo;
+use near_primitives::epoch_manager::EpochConfig;
 use near_primitives::errors::{EpochError, InvalidTxError};
 use near_primitives::hash::{hash, CryptoHash};
 use near_primitives::receipt::{ActionReceipt, Receipt, ReceiptEnum};
@@ -1155,6 +1156,22 @@ impl RuntimeAdapter for KeyValueRuntime {
         let prev_prev_hash = *prev_block_header.prev_hash();
         Ok(self.get_epoch_and_valset(*parent_hash)?.0
             != self.get_epoch_and_valset(prev_prev_hash)?.0)
+    }
+
+    fn get_epoch_id(&self, _hash: &CryptoHash) -> Result<EpochId, Error> {
+        unimplemented!();
+    }
+
+    fn get_epoch_info(&self, _id: &EpochId) -> Result<Arc<EpochInfo>, Error> {
+        unimplemented!();
+    }
+
+    fn get_epoch_config(&self, _id: &EpochId) -> Result<EpochConfig, Error> {
+        unimplemented!();
+    }
+
+    fn get_block_info(&self, _block_hash: &CryptoHash) -> Result<Arc<BlockInfo>, Error> {
+        unimplemented!();
     }
 
     fn get_epoch_id_from_prev_block(&self, parent_hash: &CryptoHash) -> Result<EpochId, Error> {
