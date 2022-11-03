@@ -62,3 +62,6 @@ rusty-tags.vi
 costs-*.txt
 names-to-stats.txt
 data_dump_*.bin
+.data
+.envrc
+.direnv
