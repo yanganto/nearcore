@@ -17,6 +17,8 @@ use near_chain::chain::{
     BlockCatchUpResponse, StateSplitRequest, StateSplitResponse,
 };
 use near_chain::test_utils::format_hash;
+#[cfg(feature = "test_features")]
+use near_chain::ChainStoreAccess;
 use near_chain::{
     byzantine_assert, near_chain_primitives, Block, BlockHeader, BlockProcessingArtifact,
     ChainGenesis, DoneApplyChunkCallback, Provenance, RuntimeAdapter,
@@ -27,8 +29,6 @@ use near_client_primitives::types::{
     StatusError, StatusSyncInfo, SyncStatus,
 };
 use near_dyn_configs::EXPECTED_SHUTDOWN_AT;
-#[cfg(feature = "test_features")]
-use near_chain::ChainStoreAccess;
 use near_network::types::{
     NetworkClientMessages, NetworkClientResponses, NetworkInfo, NetworkRequests,
     PeerManagerAdapter, PeerManagerMessageRequest,
