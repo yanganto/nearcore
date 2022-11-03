@@ -345,8 +345,27 @@ impl JsonRpcHandler {
             "sandbox_fast_forward" => {
                 process_method_call(request, |params| self.sandbox_fast_forward(params)).await
             }
+            "EXPERIMENTAL_maintenance_windows" => {
+                process_method_call(request, |params| self.maintenance_windows(params)).await
+            }
             _ => Err(RpcError::method_not_found(request.method)),
         }
+    }
+
+    async fn maintenance_windows(
+        &self,
+        request: near_jsonrpc_primitives::types::maintenance::RpcMaintenanceWindowsRequest,
+    ) -> Result<
+        near_jsonrpc_primitives::types::maintenance::RpcMaintenanceWindowsResponse,
+        near_jsonrpc_primitives::types::maintenance::RpcMaintenanceWindowsError,
+    > {
+        let near_jsonrpc_primitives::types::maintenance::RpcMaintenanceWindowsRequest {
+            account_id,
+        } = request;
+        let windows = self
+            .view_client_send(near_client_primitives::types::GetMaintenanceWindows { account_id })
+            .await?;
+        Ok(windows)
     }
 
     /// Handles adversarial requests if they are enabled.

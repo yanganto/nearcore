@@ -17,7 +17,7 @@ use near_primitives::challenge::{ChallengesResult, SlashedValidator};
 use near_primitives::checked_feature;
 use near_primitives::epoch_manager::block_info::BlockInfo;
 use near_primitives::epoch_manager::epoch_info::EpochInfo;
-use near_primitives::epoch_manager::ShardConfig;
+use near_primitives::epoch_manager::{EpochConfig, ShardConfig};
 use near_primitives::errors::{EpochError, InvalidTxError};
 use near_primitives::hash::CryptoHash;
 use near_primitives::merkle::{merklize, MerklePath};
@@ -518,6 +518,11 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Returns true, if given hash is last block in it's epoch.
     fn is_next_block_epoch_start(&self, parent_hash: &CryptoHash) -> Result<bool, Error>;
+
+    fn get_epoch_id(&self, hash: &CryptoHash) -> Result<EpochId, Error>;
+    fn get_epoch_info(&self, id: &EpochId) -> Result<Arc<EpochInfo>, Error>;
+    fn get_epoch_config(&self, id: &EpochId) -> Result<EpochConfig, Error>;
+    fn get_block_info(&self, block_hash: &CryptoHash) -> Result<Arc<BlockInfo>, Error>;
 
     /// Get epoch id given hash of previous block.
     fn get_epoch_id_from_prev_block(&self, parent_hash: &CryptoHash) -> Result<EpochId, Error>;
