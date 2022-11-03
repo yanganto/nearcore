@@ -17,6 +17,8 @@ use near_chain::chain::{
     BlockCatchUpResponse, StateSplitRequest, StateSplitResponse,
 };
 use near_chain::test_utils::format_hash;
+#[cfg(feature = "test_features")]
+use near_chain::ChainStoreAccess;
 use near_chain::{
     byzantine_assert, near_chain_primitives, Block, BlockHeader, BlockProcessingArtifact,
     ChainGenesis, DoneApplyChunkCallback, Provenance, RuntimeAdapter,
@@ -26,9 +28,7 @@ use near_client_primitives::types::{
     Error, GetNetworkInfo, NetworkInfoResponse, ShardSyncDownload, ShardSyncStatus, Status,
     StatusError, StatusSyncInfo, SyncStatus,
 };
-
-#[cfg(feature = "test_features")]
-use near_chain::ChainStoreAccess;
+use near_dyn_configs::EXPECTED_SHUTDOWN_AT;
 use near_network::types::{
     NetworkClientMessages, NetworkClientResponses, NetworkInfo, NetworkRequests,
     PeerManagerAdapter, PeerManagerMessageRequest,
@@ -105,7 +105,7 @@ pub struct ClientActor {
 
     /// Synchronization measure to allow graceful shutdown.
     /// Informs the system when a ClientActor gets dropped.
-    _shutdown_signal: Option<oneshot::Sender<()>>,
+    shutdown_signal: Option<oneshot::Sender<()>>,
 }
 
 /// Blocks the program until given genesis time arrives.
@@ -206,7 +206,7 @@ impl ClientActor {
 
             #[cfg(feature = "sandbox")]
             fastforward_delta: 0,
-            _shutdown_signal: shutdown_signal,
+            shutdown_signal: shutdown_signal,
         })
     }
 }
@@ -1053,6 +1053,25 @@ impl ClientActor {
         // There is a bug in Actix library. While there are messages in mailbox, Actix
         // will prioritize processing messages until mailbox is empty. Execution of any other task
         // scheduled with run_later will be delayed.
+
+        // Check block height to trigger expected shutdown
+        if let Ok(head) = self.client.chain.head() {
+            let block = self.client.chain.get_block(&head.last_block_hash).unwrap().clone();
+            let last_final_hash = block.header().last_final_block();
+            let last_final_block_height = self
+                .client
+                .chain
+                .get_block(&last_final_hash)
+                .map_or(0, |block| block.header().height());
+            let block_height_to_shutdown =
+                EXPECTED_SHUTDOWN_AT.load(std::sync::atomic::Ordering::Relaxed);
+            if block_height_to_shutdown > 0 && last_final_block_height >= block_height_to_shutdown {
+                info!(target: "client", "Expected shutdown triggered: final block({}) >= ({})", last_final_block_height, block_height_to_shutdown);
+                if let Some(tx) = self.shutdown_signal.take() {
+                    let _ = tx.send(()); // Ignore send signal fail, it will send again in next trigger
+                }
+            }
+        }
 
         let _d = delay_detector::DelayDetector::new(|| "client triggers".into());
 
