@@ -903,3 +903,27 @@ pub enum SandboxResponse {
 impl Message for SandboxMessage {
     type Result = SandboxResponse;
 }
+pub struct GetMaintenanceWindows {
+    pub account_id: AccountId,
+}
+
+impl Message for GetMaintenanceWindows {
+    type Result = Result<Vec<(BlockHeight, BlockHeight)>, GetMaintenanceWindowsError>;
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetMaintenanceWindowsError {
+    #[error("IO Error: {0}")]
+    IOError(String),
+    #[error("It is a bug if you receive this error type, please, report this incident: https://github.com/near/nearcore/issues/new/choose. Details: {0}")]
+    Unreachable(String),
+}
+
+impl From<near_chain_primitives::Error> for GetMaintenanceWindowsError {
+    fn from(error: near_chain_primitives::Error) -> Self {
+        match error {
+            near_chain_primitives::Error::IOErr(error) => Self::IOError(error.to_string()),
+            _ => Self::Unreachable(error.to_string()),
+        }
+    }
+}

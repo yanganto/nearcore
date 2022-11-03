@@ -20,8 +20,9 @@ use near_chain_configs::{ClientConfig, ProtocolConfigView};
 use near_client_primitives::types::{
     Error, GetBlock, GetBlockError, GetBlockProof, GetBlockProofError, GetBlockProofResponse,
     GetBlockWithMerkleTree, GetChunkError, GetExecutionOutcome, GetExecutionOutcomeError,
-    GetExecutionOutcomesForBlock, GetGasPrice, GetGasPriceError, GetNextLightClientBlockError,
-    GetProtocolConfig, GetProtocolConfigError, GetReceipt, GetReceiptError, GetStateChangesError,
+    GetExecutionOutcomesForBlock, GetGasPrice, GetGasPriceError, GetMaintenanceWindows,
+    GetMaintenanceWindowsError, GetNextLightClientBlockError, GetProtocolConfig,
+    GetProtocolConfigError, GetReceipt, GetReceiptError, GetStateChangesError,
     GetStateChangesWithCauseInBlock, GetStateChangesWithCauseInBlockForTrackedShards,
     GetValidatorInfoError, Query, QueryError, TxStatus, TxStatusError,
 };
@@ -43,8 +44,8 @@ use near_primitives::syncing::{
     ShardStateSyncResponseV2,
 };
 use near_primitives::types::{
-    AccountId, BlockId, BlockReference, EpochReference, Finality, MaybeBlockId, ShardId,
-    SyncCheckpoint, TransactionOrReceiptId, ValidatorInfoIdentifier,
+    AccountId, BlockHeight, BlockId, BlockReference, EpochReference, Finality, MaybeBlockId,
+    ShardId, SyncCheckpoint, TransactionOrReceiptId, ValidatorInfoIdentifier,
 };
 use near_primitives::views::validator_stake_view::ValidatorStakeView;
 use near_primitives::views::{
@@ -240,6 +241,54 @@ impl ViewClientActor {
                 self.chain.get_block(&block_hash).map(Some)
             }
         }
+    }
+    /// Returns maintenance windows by account.
+    fn get_maintenance_windows(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<(BlockHeight, BlockHeight)>, near_chain::Error> {
+        let head = self.chain.head()?;
+        let epoch_id = self.runtime_adapter.get_epoch_id(&head.last_block_hash)?;
+        let epoch_info = self.runtime_adapter.get_epoch_info(&epoch_id)?;
+        let num_shards = self.runtime_adapter.num_shards(&epoch_id)?;
+        let cur_block_info = self.runtime_adapter.get_block_info(&head.last_block_hash)?;
+        let next_epoch_start_height =
+            self.runtime_adapter.get_epoch_start_height(cur_block_info.hash())?
+                + self.runtime_adapter.get_epoch_config(&epoch_id)?.epoch_length;
+
+        let mut windows: Vec<(BlockHeight, BlockHeight)> = Vec::new();
+        let mut start_block_of_window: Option<BlockHeight> = None;
+        let last_block_of_epoch = next_epoch_start_height - 1;
+
+        for block_height in head.height..next_epoch_start_height {
+            let bp = epoch_info.sample_block_producer(block_height);
+            let bp = epoch_info.get_validator(bp).account_id().clone();
+            let cps: Vec<AccountId> = (0..num_shards)
+                .into_iter()
+                .map(|shard_id| {
+                    let cp = epoch_info.sample_chunk_producer(block_height, shard_id);
+                    let cp = epoch_info.get_validator(cp).account_id().clone();
+                    cp
+                })
+                .collect();
+            if account_id != bp && !cps.iter().any(|a| *a == account_id) {
+                if let Some(start) = start_block_of_window {
+                    if block_height == last_block_of_epoch {
+                        windows.push((start, block_height + 1));
+                        start_block_of_window = None;
+                    }
+                } else {
+                    start_block_of_window = Some(block_height);
+                }
+            } else if let Some(start) = start_block_of_window {
+                windows.push((start, block_height));
+                start_block_of_window = None;
+            }
+        }
+        if let Some(start) = start_block_of_window {
+            windows.push((start, next_epoch_start_height));
+        }
+        Ok(windows)
     }
 
     fn handle_query(&mut self, msg: Query) -> Result<QueryResponse, QueryError> {
@@ -1218,6 +1267,18 @@ impl Handler<GetGasPrice> for ViewClientActor {
             metrics::VIEW_CLIENT_MESSAGE_TIME.with_label_values(&["GetGasPrice"]).start_timer();
         let header = self.maybe_block_id_to_block_header(msg.block_id);
         Ok(GasPriceView { gas_price: header?.gas_price() })
+    }
+}
+
+impl Handler<GetMaintenanceWindows> for ViewClientActor {
+    type Result = Result<Vec<(BlockHeight, BlockHeight)>, GetMaintenanceWindowsError>;
+
+    #[perf]
+    fn handle(&mut self, msg: GetMaintenanceWindows, _: &mut Self::Context) -> Self::Result {
+        let _timer = metrics::VIEW_CLIENT_MESSAGE_TIME
+            .with_label_values(&["GetMaintenanceWindows"])
+            .start_timer();
+        Ok(self.get_maintenance_windows(msg.account_id)?)
     }
 }
 
