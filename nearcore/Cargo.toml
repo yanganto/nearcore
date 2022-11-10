@@ -44,6 +44,7 @@ near-chain-configs = { path = "../core/chain-configs" }
 near-chunks = { path = "../chain/chunks" }
 near-client = { path = "../chain/client" }
 near-crypto = { path = "../core/crypto" }
+near-dyn-configs = { path = "../core/dyn-configs" }
 near-epoch-manager = { path = "../chain/epoch_manager" }
 near-jsonrpc = { path = "../chain/jsonrpc", optional = true }
 near-mainnet-res = { path = "../utils/mainnet-res" }

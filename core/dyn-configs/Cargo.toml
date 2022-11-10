@@ -1,0 +1,13 @@
+[package]
+name = "near-dyn-configs"
+version = "0.0.0"
+publish = true
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/near/nearcore"
+description = "Dynamic configure helpers for the near codebase"
+
+[dependencies]
+prometheus = "0.13.1"
+once_cell = "1.5.2"
+near-metrics = { path = "../metrics" }

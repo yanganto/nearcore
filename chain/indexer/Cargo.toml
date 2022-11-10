@@ -21,6 +21,7 @@ tokio = { version = "1.1", features = ["time", "sync"] }
 nearcore = { path = "../../nearcore" }
 near-client = { path = "../client" }
 near-chain-configs = { path = "../../core/chain-configs" }
+near-dyn-configs = { path = "../../core/dyn-configs" }
 near-crypto = { path = "../../core/crypto" }
 near-indexer-primitives = { path = "../indexer-primitives" }
 near-primitives = { path = "../../core/primitives" }

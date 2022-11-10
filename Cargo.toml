@@ -22,6 +22,7 @@ members = [
     "core/chain-configs",
     "core/crypto",
     "core/metrics",
+    "core/dyn-configs",
     "core/o11y",
     "core/primitives",
     "core/primitives-core",

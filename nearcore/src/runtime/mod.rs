@@ -1238,6 +1238,26 @@ impl RuntimeAdapter for NightshadeRuntime {
         epoch_manager.is_next_block_epoch_start(parent_hash).map_err(Error::from)
     }
 
+    fn get_epoch_id(&self, hash: &CryptoHash) -> Result<EpochId, Error> {
+        let epoch_manager = self.epoch_manager.read();
+        Ok(epoch_manager.get_epoch_id(hash)?)
+    }
+
+    fn get_epoch_info(&self, epoch_id: &EpochId) -> Result<Arc<EpochInfo>, Error> {
+        let epoch_manager = self.epoch_manager.read();
+        Ok(epoch_manager.get_epoch_info(&epoch_id)?)
+    }
+
+    fn get_epoch_config(&self, epoch_id: &EpochId) -> Result<EpochConfig, Error> {
+        let epoch_manager = self.epoch_manager.read();
+        Ok(epoch_manager.get_epoch_config(epoch_id)?)
+    }
+
+    fn get_block_info(&self, block_hash: &CryptoHash) -> Result<Arc<BlockInfo>, Error> {
+        let epoch_manager = self.epoch_manager.read();
+        Ok(epoch_manager.get_block_info(block_hash)?)
+    }
+
     fn get_epoch_id_from_prev_block(&self, parent_hash: &CryptoHash) -> Result<EpochId, Error> {
         let epoch_manager = self.epoch_manager.read();
         epoch_manager.get_epoch_id_from_prev_block(parent_hash).map_err(Error::from)
