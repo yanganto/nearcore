@@ -850,6 +850,8 @@ pub fn init_configs(
         config.network.boot_nodes = nodes.to_string();
     }
 
+    config.tracked_shards = vec![0];
+
     if max_gas_burnt_view.is_some() {
         config.max_gas_burnt_view = max_gas_burnt_view;
     }
@@ -1079,6 +1081,7 @@ pub fn create_testnet_configs_from_seeds(
             };
             config.network.skip_sync_wait = num_validator_seats == 1;
         }
+        config.tracked_shards = vec![0];
         config.archive = archive;
         config.consensus.min_num_peers =
             std::cmp::min(num_validator_seats as usize - 1, config.consensus.min_num_peers);
