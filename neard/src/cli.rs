@@ -3,7 +3,6 @@ use crate::watchers::Watcher;
 use crate::watchers::{
     dyn_config_watcher::DynConfig, log_config_watcher::LogConfig, UpdateBehavior,
 };
-use actix::SystemRunner;
 use clap::{Args, Parser};
 use near_chain_configs::GenesisValidationMode;
 use near_o11y::{
@@ -13,12 +12,12 @@ use near_primitives::types::{Gas, NumSeats, NumShards};
 use near_state_viewer::StateViewerSubCommand;
 use near_store::db::RocksDB;
 use near_store::Mode;
-use std::cell::Cell;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
-use tokio::sync::oneshot::Receiver;
 use tracing::{debug, error, info, warn};
 
 /// NEAR Protocol Node
@@ -349,10 +348,10 @@ impl RunCmd {
         self,
         home_dir: &Path,
         genesis_validation: GenesisValidationMode,
-        runtime: Runtime,
+        _runtime: Runtime,
     ) {
         // Load configs from home.
-        let mut near_config = nearcore::config::load_config(&home_dir, genesis_validation)
+        let mut near_config = nearcore::config::load_config(&home_dir, genesis_validation.clone())
             .unwrap_or_else(|e| panic!("Error loading config: {:#}", e));
 
         check_release_build(&near_config.client_config.chain_id);
@@ -414,40 +413,59 @@ impl RunCmd {
             }
         }
 
-        let (tx, rx) = oneshot::channel::<()>();
-        let sys = new_actix_system(runtime);
-        sys.block_on(async move {
-            let nearcore::NearNode { rpc_servers, .. } =
-                nearcore::start_with_config_and_synchronization(home_dir, near_config, Some(tx))
+        let (tx, _) = broadcast::channel::<()>(16);
+        let store = nearcore::init_and_migrate_store(home_dir, &mut near_config).expect("storage can not access");
+
+        loop {
+            // reload signer
+            let nearcore::config::NearConfig { validator_signer, .. } =
+                nearcore::config::load_config(&home_dir, genesis_validation.clone())
+                    .unwrap_or_else(|e| panic!("Error loading config: {:#}", e));
+            near_config.validator_signer = validator_signer;
+
+            let sys = actix::System::new();
+            let tx_crash = tx.clone();
+            let rx_crash = tx.subscribe();
+            let s = store.clone();
+            let (tx_sig, mut rx_sig) = oneshot::channel::<&str>();
+            let config = near_config.clone();
+
+            let _ = sys.block_on(async move {
+                let nearcore::NearNode { rpc_servers, .. } =
+                    nearcore::start_with_config_and_synchronization(
+                        home_dir,
+                        config,
+                        Some(tx_crash),
+                        Some(s),
+                    )
                     .expect("start_with_config");
 
-            let sig = wait_for_interrupt_signal(home_dir, rx).await;
-            warn!(target: "neard", "{}, stopping... this may take a few minutes.", sig);
-            futures::future::join_all(rpc_servers.iter().map(|(name, server)| async move {
-                server.stop(true).await;
-                debug!(target: "neard", "{} server stopped", name);
-            }))
-            .await;
-            actix::System::current().stop();
-            opentelemetry::global::shutdown_tracer_provider(); // Finish sending spans.
-        });
-        sys.run().unwrap();
+                let sig = wait_for_interrupt_signal(home_dir, rx_crash).await;
+                futures::future::join_all(rpc_servers.iter().map(|(name, server)| async move {
+                    server.stop(true).await;
+                    debug!(target: "neard", "{} server stopped", name);
+                }))
+                .await;
+                actix::System::current().stop();
+                tx_sig.send(sig)
+            });
+            sys.run().unwrap();
+            match rx_sig.try_recv() {
+                Ok(sig) => {
+                    if sig == "reload signer" {
+                        info!(target: "neard", "{}, restarting... this may take a few minutes.", sig);
+                        continue;
+                    } else {
+                        warn!(target: "neard", "{}, stopping... this may take a few minutes.", sig);
+                        break;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
         info!(target: "neard", "Waiting for RocksDB to gracefully shutdown");
         RocksDB::block_until_all_instances_are_dropped();
     }
-}
-
-/// Creates a new actix SystemRunner using the given tokio Runtime.
-fn new_actix_system(runtime: Runtime) -> SystemRunner {
-    // `with_tokio_rt()` accepts an `Fn()->Runtime`, however we know that this function is called exactly once.
-    // This makes it safe to move out of the captured variable `runtime`, which is done by a trick
-    // using a `swap` of `Cell<Option<Runtime>>`s.
-    let runtime_cell = Cell::new(Some(runtime));
-    actix::System::with_tokio_rt(|| {
-        let r = Cell::new(None);
-        runtime_cell.swap(&r);
-        r.into_inner().unwrap()
-    })
 }
 
 #[cfg(not(unix))]
@@ -479,9 +497,9 @@ async fn wait_for_interrupt_signal(home_dir: &Path, mut rx_crash: Receiver<()>) 
              _ = sigterm.recv() => "SIGTERM",
              _ = sighup.recv() => {
                 update_watchers(&home_dir, UpdateBehavior::UpdateOrReset);
-                continue;
+                "reload signer"
              },
-             _ = &mut rx_crash => "ClientActor died",
+             _ = rx_crash.recv() => "ClientActor died",
         };
     }
 }

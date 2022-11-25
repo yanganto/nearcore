@@ -20,7 +20,7 @@ use near_store::{DBCol, Mode, Store, StoreOpener};
 use near_telemetry::TelemetryActor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 use tracing::{error, info, trace};
 
 pub mod append_only_map;
@@ -199,7 +199,7 @@ fn apply_store_migrations_if_exists(
     Ok(true)
 }
 
-fn init_and_migrate_store(home_dir: &Path, near_config: &NearConfig) -> anyhow::Result<Store> {
+pub fn init_and_migrate_store(home_dir: &Path, near_config: &NearConfig) -> anyhow::Result<Store> {
     let opener = Store::opener(home_dir, &near_config.config.store);
     let exists = apply_store_migrations_if_exists(&opener, near_config)?;
     let store = opener.open();
@@ -234,7 +234,7 @@ pub struct NearNode {
 }
 
 pub fn start_with_config(home_dir: &Path, config: NearConfig) -> anyhow::Result<NearNode> {
-    start_with_config_and_synchronization(home_dir, config, None)
+    start_with_config_and_synchronization(home_dir, config, None, None)
 }
 
 pub fn start_with_config_and_synchronization(
@@ -242,9 +242,14 @@ pub fn start_with_config_and_synchronization(
     config: NearConfig,
     // 'shutdown_signal' will notify the corresponding `oneshot::Receiver` when an instance of
     // `ClientActor` gets dropped.
-    shutdown_signal: Option<oneshot::Sender<()>>,
+    shutdown_signal: Option<broadcast::Sender<()>>,
+    store: Option<Store>,
 ) -> anyhow::Result<NearNode> {
-    let store = init_and_migrate_store(home_dir, &config)?;
+    let store = if let Some(store) = store {
+        store
+    } else {
+        init_and_migrate_store(home_dir, &config)?
+    };
 
     let runtime = Arc::new(NightshadeRuntime::from_config(home_dir, store.clone(), &config));
 
