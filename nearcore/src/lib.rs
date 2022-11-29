@@ -16,11 +16,11 @@ use near_primitives::block::GenesisId;
 use near_rust_allocator_proxy::reset_memory_usage_max;
 use near_store::migrations::{migrate_28_to_29, migrate_29_to_30};
 use near_store::version::{set_store_version, DbVersion, DB_VERSION};
-use near_store::{DBCol, Mode, NodeStorage, StoreOpener, Temperature};
+use near_store::{DBCol, Mode, NodeStorage, Store, StoreOpener, Temperature};
 use near_telemetry::TelemetryActor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 use tracing::{info, trace};
 
 pub mod append_only_map;
@@ -196,7 +196,7 @@ fn apply_store_migrations_if_exists(
     Ok(())
 }
 
-fn init_and_migrate_store(
+pub fn init_and_migrate_store(
     home_dir: &Path,
     near_config: &NearConfig,
 ) -> anyhow::Result<NodeStorage> {
@@ -234,7 +234,7 @@ pub struct NearNode {
 }
 
 pub fn start_with_config(home_dir: &Path, config: NearConfig) -> anyhow::Result<NearNode> {
-    start_with_config_and_synchronization(home_dir, config, None)
+    start_with_config_and_synchronization(home_dir, config, None, None)
 }
 
 pub fn start_with_config_and_synchronization(
@@ -242,15 +242,17 @@ pub fn start_with_config_and_synchronization(
     config: NearConfig,
     // 'shutdown_signal' will notify the corresponding `oneshot::Receiver` when an instance of
     // `ClientActor` gets dropped.
-    shutdown_signal: Option<oneshot::Sender<()>>,
+    shutdown_signal: Option<broadcast::Sender<()>>,
+    store: Option<Store>,
 ) -> anyhow::Result<NearNode> {
-    let store = init_and_migrate_store(home_dir, &config)?;
+    let store = if let Some(store) = store {
+        store
+    } else {
+        let storage = init_and_migrate_store(home_dir, &config)?;
+        storage.get_store(Temperature::Hot)
+    };
 
-    let runtime = Arc::new(NightshadeRuntime::from_config(
-        home_dir,
-        store.get_store(Temperature::Hot),
-        &config,
-    ));
+    let runtime = Arc::new(NightshadeRuntime::from_config(home_dir, store.clone(), &config));
 
     let telemetry = TelemetryActor::new(config.telemetry_config.clone()).start();
     let chain_genesis = ChainGenesis::new(&config.genesis);
@@ -288,7 +290,7 @@ pub fn start_with_config_and_synchronization(
     let mut rpc_servers = Vec::new();
     let network_actor = PeerManagerActor::spawn(
         time::Clock::real(),
-        store.into_inner(near_store::Temperature::Hot),
+        store.storage,
         config.network_config,
         client_actor.clone().recipient(),
         view_client.clone().recipient(),

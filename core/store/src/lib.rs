@@ -82,7 +82,7 @@ pub struct NodeStorage {
 /// data.
 #[derive(Clone)]
 pub struct Store {
-    storage: Arc<dyn Database>,
+    pub storage: Arc<dyn Database>,
 }
 
 impl NodeStorage {

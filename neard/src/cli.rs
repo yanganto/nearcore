@@ -13,12 +13,16 @@ use near_primitives::types::{Gas, NumSeats, NumShards};
 use near_state_viewer::StateViewerSubCommand;
 use near_store::db::RocksDB;
 use near_store::Mode;
+use near_store::Temperature;
 use std::cell::Cell;
+use std::fs::File;
+use std::fs::Metadata;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::oneshot;
-use tokio::sync::oneshot::Receiver;
 use tracing::{debug, error, info, warn};
 
 /// NEAR Protocol Node
@@ -352,7 +356,7 @@ impl RunCmd {
         runtime: Runtime,
     ) {
         // Load configs from home.
-        let mut near_config = nearcore::config::load_config(&home_dir, genesis_validation)
+        let mut near_config = nearcore::config::load_config(&home_dir, genesis_validation.clone())
             .unwrap_or_else(|e| panic!("Error loading config: {:#}", e));
 
         check_release_build(&near_config.client_config.chain_id);
@@ -414,24 +418,60 @@ impl RunCmd {
             }
         }
 
-        let (tx, rx) = oneshot::channel::<()>();
-        let sys = new_actix_system(runtime);
-        sys.block_on(async move {
-            let nearcore::NearNode { rpc_servers, .. } =
-                nearcore::start_with_config_and_synchronization(home_dir, near_config, Some(tx))
+        let (tx, _) = broadcast::channel::<()>(16);
+        let storage = nearcore::init_and_migrate_store(home_dir, &near_config)
+            .expect("storage can not access");
+        let store = storage.get_store(Temperature::Hot);
+
+        loop {
+            // reload signer
+            let nearcore::config::NearConfig { validator_signer, .. } =
+                nearcore::config::load_config(&home_dir, genesis_validation.clone())
+                    .unwrap_or_else(|e| panic!("Error loading config: {:#}", e));
+            near_config.validator_signer = validator_signer;
+
+            let sys = actix::System::new();
+            let tx_crash = tx.clone();
+            let rx_crash = tx.subscribe();
+            let s = store.clone();
+            let (tx_sig, mut rx_sig) = oneshot::channel::<&str>();
+            let config = near_config.clone();
+
+            let _ = sys.block_on(async move {
+                let nearcore::NearNode { rpc_servers, .. } =
+                    nearcore::start_with_config_and_synchronization(
+                        home_dir,
+                        config,
+                        Some(tx_crash),
+                        Some(s),
+                    )
                     .expect("start_with_config");
 
-            let sig = wait_for_interrupt_signal(home_dir, rx).await;
-            warn!(target: "neard", "{}, stopping... this may take a few minutes.", sig);
-            futures::future::join_all(rpc_servers.iter().map(|(name, server)| async move {
-                server.stop(true).await;
-                debug!(target: "neard", "{} server stopped", name);
-            }))
-            .await;
-            actix::System::current().stop();
-            opentelemetry::global::shutdown_tracer_provider(); // Finish sending spans.
-        });
-        sys.run().unwrap();
+                let sig = wait_for_interrupt_signal(home_dir, rx_crash).await;
+                warn!(target: "neard", "{}, stopping... this may take a few minutes.", sig);
+                futures::future::join_all(rpc_servers.iter().map(|(name, server)| async move {
+                    server.stop(true).await;
+                    debug!(target: "neard", "{} server stopped", name);
+                }))
+                .await;
+                actix::System::current().stop();
+                // Disable the subscriber to properly shutdown the tracer.
+                tx_sig.send(sig)
+            });
+            sys.run().unwrap();
+            match rx_sig.try_recv() {
+                Ok(sig) => {
+                    if sig == "reload signer" {
+                        info!(target: "neard", "{}, restarting... this may take a few minutes.", sig);
+                        continue;
+                    } else {
+                        warn!(target: "neard", "{}, stopping... this may take a few minutes.", sig);
+                        break;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
         info!(target: "neard", "Waiting for RocksDB to gracefully shutdown");
         RocksDB::block_until_all_instances_are_dropped();
     }
@@ -448,6 +488,18 @@ fn new_actix_system(runtime: Runtime) -> SystemRunner {
         runtime_cell.swap(&r);
         r.into_inner().unwrap()
     })
+}
+
+async fn watch_config(home_dir: &Path) -> Option<Metadata> {
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let mut config_path = home_dir.to_path_buf();
+    config_path.push("config.json");
+    if let Ok(f) = tokio::fs::File::open(&config_path).await {
+        if let Ok(meta) = f.metadata().await {
+            return Some(meta);
+        }
+    }
+    None
 }
 
 #[cfg(not(unix))]
@@ -472,6 +524,12 @@ async fn wait_for_interrupt_signal(home_dir: &Path, mut rx_crash: Receiver<()>) 
     let mut sigint = signal(SignalKind::interrupt()).unwrap();
     let mut sigterm = signal(SignalKind::terminate()).unwrap();
     let mut sighup = signal(SignalKind::hangup()).unwrap();
+    let config_modify_time = {
+        let mut config_path = home_dir.to_path_buf();
+        config_path.push("config.json");
+        let meta = File::open(&config_path).unwrap().metadata().unwrap();
+        meta.modified().unwrap()
+    };
 
     loop {
         break tokio::select! {
@@ -481,7 +539,17 @@ async fn wait_for_interrupt_signal(home_dir: &Path, mut rx_crash: Receiver<()>) 
                 update_watchers(&home_dir, UpdateBehavior::UpdateOrReset);
                 continue;
              },
-             _ = &mut rx_crash => "ClientActor died",
+             meta = watch_config(&home_dir) => {
+                if let Some(m) = meta {
+                    if let Ok(t) = m.modified() {
+                        if t != config_modify_time {
+                            return "reload signer"
+                        }
+                    }
+                }
+                continue;
+             }
+             _ = rx_crash.recv() => "ClientActor died",
         };
     }
 }

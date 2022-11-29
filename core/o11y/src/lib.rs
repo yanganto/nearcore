@@ -10,6 +10,7 @@ use opentelemetry::KeyValue;
 use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::NonBlocking;
 use tracing_opentelemetry::OpenTelemetryLayer;
