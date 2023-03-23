@@ -356,6 +356,8 @@ pub struct Config {
     /// Options for dumping state of every epoch to S3.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_sync: Option<StateSyncConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_key_file: Option<bool>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -393,6 +395,7 @@ impl Default for Config {
             split_storage: None,
             expected_shutdown: None,
             state_sync: None,
+            update_key_file: None,
         }
     }
 }
