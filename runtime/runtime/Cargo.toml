@@ -54,5 +54,5 @@ tempfile.workspace = true
 
 near-chain-configs = { path = "../../core/chain-configs" }
 near-store = { path = "../../core/store", features = ["test_features"] }
-near-test-contracts = { path = "../../runtime/near-test-contracts" }
+# near-test-contracts = { path = "../../runtime/near-test-contracts" }
 testlib = { path = "../../test-utils/testlib" }
